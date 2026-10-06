@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Scholarship Selector</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; color: #172033; background: #f5f7fb; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; }
+    main { max-width: 1100px; margin: auto; }
+    h1 { margin: 0 0 6px; }
+    p { color: #58657a; }
+    .panel { background: white; border: 1px solid #e1e6ef; border-radius: 12px; padding: 18px; margin: 18px 0; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+    label { display: block; font-size: .88rem; font-weight: 600; }
+    input { width: 100%; margin-top: 5px; padding: 9px; border: 1px solid #cbd3e1; border-radius: 7px; }
+    button { border: 0; border-radius: 7px; padding: 10px 14px; cursor: pointer; font-weight: 650; }
+    .primary { background: #315de8; color: white; }
+    .secondary { background: #e9eefb; color: #203b91; }
+    .danger { background: #fff0ef; color: #a52a22; }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #edf0f5; }
+    th { font-size: .85rem; color: #56627a; }
+    .awarded { color: #167246; font-weight: 700; }
+    .not-awarded { color: #7a5360; }
+    .summary { font-weight: 650; }
+    .note { font-size: .9rem; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Scholarship Selector</h1>
+  <p>Rank applicants using transparent, configurable criteria and allocate awards within the available budget.</p>
+
+  <section class="panel">
+    <h2>Selection settings</h2>
+    <div class="grid">
+      <label>Total budget ($)
+        <input id="budget" type="number" min="0" value="5000">
+      </label>
+      <label>Marks weight (%)
+        <input id="marksWeight" type="number" min="0" value="50">
+      </label>
+      <label>Achievements weight (%)
+        <input id="achievementWeight" type="number" min="0" value="30">
+      </label>
+      <label>Financial-need weight (%)
+        <input id="needWeight" type="number" min="0" value="20">
+      </label>
+      <label>Award per student ($)
+        <input id="awardAmount" type="number" min="0" value="1000">
+      </label>
+    </div>
+    <p class="note">Weights are normalized automatically. Financial need is scored from 0 (least need) to 100 (greatest need).</p>
+  </section>
+
+  <section class="panel">
+    <h2>Add applicant</h2>
+    <form id="studentForm">
+      <div class="grid">
+        <label>Student name
+          <input id="name" required maxlength="80" placeholder="e.g. Alex Rivera">
+        </label>
+        <label>Marks (0–100)
+          <input id="marks" type="number" min="0" max="100" required>
+        </label>
+        <label>Achievements (0–100)
+          <input id="achievements" type="number" min="0" max="100" required>
+        </label>
+        <label>Financial need (0–100)
+          <input id="need" type="number" min="0" max="100" required>
+        </label>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Add student</button></div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="grid">
+      <div>
+        <h2>Ranked applicants</h2>
+        <div id="summary" class="summary"></div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="primary" id="rankButton">Rank and allocate</button>
+      <button class="secondary" id="exportButton">Export CSV</button>
+      <button class="danger" id="clearButton">Clear applicants</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th><th>Student</th><th>Marks</th><th>Achievements</th>
+            <th>Need</th><th>Score</th><th>Decision</th><th>Award</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="studentRows"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+  const STORAGE_KEY = "scholarship-selector-students";
+  let students = JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]");
+
+  const $ = id => document.getElementById(id);
+  const number = id => Math.max(0, Number($(id).value) || 0);
+  const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+  }[char]));
+
+  function rankStudents() {
+    const weights = [
+      number("marksWeight"),
+      number("achievementWeight"),
+      number("needWeight")
+    ];
+    const totalWeight = weights.reduce((sum, value) => sum + value, 0);
+    if (totalWeight === 0) {
+      alert("Set at least one criterion weight above zero.");
+      return;
+    }
+
+    const award = number("awardAmount");
+    let remaining = number("budget");
+
+    const ranked = students.map(student => ({
+      ...student,
+      score: (
+        student.marks * weights[0] +
+        student.achievements * weights[1] +
+        student.need * weights[2]
+      ) / totalWeight
+    })).sort((a, b) =>
+      b.score - a.score ||
+      b.marks - a.marks ||
+      a.name.localeCompare(b.name)
+    );
+
+    ranked.forEach((student, index) => {
+      student.rank = index + 1;
+      student.awarded = award > 0 && remaining >= award;
+      student.award = student.awarded ? award : 0;
+      if (student.awarded) remaining -= award;
+    });
+
+    students = ranked;
+    render();
+  }
+
+  function render() {
+    const awarded = students.filter(s => s.awarded).length;
+    const spent = students.reduce((sum, s) => sum + (s.award || 0), 0);
+    $("summary").textContent =
+      `${students.length} applicants · ${awarded} awards · $${spent.toLocaleString()} allocated`;
+    $("studentRows").innerHTML = students.map((s, i) => `
+      <tr>
+        <td>${s.rank || "—"}</td>
+        <td>${escapeHtml(s.name)}</td>
+        <td>${s.marks}</td>
+        <td>${s.achievements}</td>
+        <td>${s.need}</td>
+        <td>${Number.isFinite(s.score) ? s.score.toFixed(2) : "—"}</td>
+        <td class="${s.awarded ? "awarded" : "not-awarded"}">${s.awarded ? "Awarded" : "Not awarded"}</td>
+        <td>$${(s.award || 0).toLocaleString()}</td>
+        <td><button class="danger" onclick="removeStudent(${i})" aria-label="Remove ${escapeHtml(s.name)}">Remove</button></td>
+      </tr>`).join("");
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(students));
+  }
+
+  window.removeStudent = index => {
+    students.splice(index, 1);
+    render();
+  };
+
+  $("studentForm").addEventListener("submit", event => {
+    event.preventDefault();
+    const student = {
+      name: $("name").value.trim(),
+      marks: Number($("marks").value),
+      achievements: Number($("achievements").value),
+      need: Number($("need").value),
+      awarded: false,
+      award: 0
+    };
+    if (!student.name || [student.marks, student.achievements, student.need].some(v => v < 0 || v > 100)) {
+      alert("Enter a name and scores between 0 and 100.");
+      return;
+    }
+    students.push(student);
+    event.target.reset();
+    render();
+  });
+
+  $("rankButton").addEventListener("click", rankStudents);
+  $("clearButton").addEventListener("click", () => {
+    if (confirm("Remove all applicants?")) {
+      students = [];
+      render();
+    }
+  });
+
+  $("exportButton").addEventListener("click", () => {
+    const headers = ["Rank", "Name", "Marks", "Achievements", "Need", "Score", "Decision", "Award"];
+    const rows = students.map(s => [
+      s.rank || "", s.name, s.marks, s.achievements, s.need,
+      Number.isFinite(s.score) ? s.score.toFixed(2) : "",
+      s.awarded ? "Awarded" : "Not awarded", s.award || 0
+    ]);
+    const csv = [headers, ...rows].map(row =>
+      row.map(value => `"${String(value).replaceAll('"', '""')}"`).join(",")
+    ).join("\n");
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    link.download = "scholarship-results.csv";
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
+
+  render();
+</script>
+</body>
+</html>
